@@ -217,6 +217,70 @@ func TestOtelMiddleware_NilBody(t *testing.T) {
 	assert.Len(t, spans, 0, "nil body should skip instrumentation")
 }
 
+// TestOtelMiddleware_InvalidRequestJSON verifies that a chat request body
+// which fails to parse (e.g. truncated by maxRequestBodySize) is passed
+// through uninstrumented rather than producing a span with an empty
+// gen_ai.request.model.
+func TestOtelMiddleware_InvalidRequestJSON(t *testing.T) {
+	sr := setupTestTracer(t)
+
+	middleware := OtelMiddleware()
+
+	req, _ := http.NewRequest(
+		"POST",
+		"http://api.openai.com/v1/chat/completions",
+		io.NopCloser(bytes.NewReader([]byte("not json"))),
+	)
+
+	called := false
+	next := func(r *http.Request) (*http.Response, error) {
+		called = true
+		return &http.Response{
+			StatusCode: 200,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(bytes.NewReader(nil)),
+		}, nil
+	}
+
+	resp, err := middleware(req, next)
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+	assert.True(t, called)
+	assert.Empty(t, sr.Ended(), "no span should be created for an unparsable request body")
+}
+
+// TestOtelMiddleware_MissingModel verifies that a well-formed chat request
+// body which simply omits the model field is passed through uninstrumented
+// rather than producing a span named "chat " with an empty
+// gen_ai.request.model.
+func TestOtelMiddleware_MissingModel(t *testing.T) {
+	sr := setupTestTracer(t)
+
+	middleware := OtelMiddleware()
+
+	req, _ := http.NewRequest(
+		"POST",
+		"http://api.openai.com/v1/chat/completions",
+		io.NopCloser(bytes.NewReader([]byte(`{"max_tokens":10}`))),
+	)
+
+	called := false
+	next := func(r *http.Request) (*http.Response, error) {
+		called = true
+		return &http.Response{
+			StatusCode: 200,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(bytes.NewReader(nil)),
+		}, nil
+	}
+
+	resp, err := middleware(req, next)
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+	assert.True(t, called)
+	assert.Empty(t, sr.Ended(), "no span should be created when the request omits a model")
+}
+
 func TestOtelMiddleware_NextError(t *testing.T) {
 	sr := setupTestTracer(t)
 

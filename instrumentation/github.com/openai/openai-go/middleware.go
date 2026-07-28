@@ -137,6 +137,15 @@ func OtelMiddleware() func(*http.Request, func(*http.Request) (*http.Response, e
 			model, spanAttrs = parseEmbeddingRequest(bodyBytes)
 		}
 
+		// An empty model means the body was not valid JSON (e.g. truncated by
+		// maxRequestBodySize) or omitted the field entirely. Either way there
+		// is nothing meaningful to attach to a span, so pass the request
+		// through rather than emit a "<op> " span with an empty
+		// gen_ai.request.model.
+		if model == "" {
+			return next(req)
+		}
+
 		spanName := opName + " " + model
 		baseAttrs := []attribute.KeyValue{
 			semconv.GenAISystem("openai"),
